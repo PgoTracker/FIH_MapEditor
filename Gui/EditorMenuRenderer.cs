@@ -1186,7 +1186,9 @@ namespace FIHMapEditor
                 _c.ToggleMapsHub();
             y += 36;
 
-            string file = _c.CurrentFileName != null ? _c.CurrentFileName + MapSerializer.EXTENSION : "(not saved yet)";
+            string file = _c.CurrentFileName != null
+                ? _c.CurrentFileName + (_c.CurrentMapIsPackage ? MapPackage.Extension : MapSerializer.EXTENSION)
+                : "(not saved yet)";
             GUI.Label(new Rect(15, y, W - 30, 20), $"File: {file}", _styleSmall);
             y += 22;
             GUI.Label(new Rect(15, y, W - 30, 20), $"Folder: BepInEx\\plugins\\FIHMapEditor\\Maps", _styleSmall);

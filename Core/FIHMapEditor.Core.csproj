@@ -10,6 +10,9 @@
     <Compile Include="Maps\MapSession.cs" />
     <Compile Include="Maps\MapMigrations.cs" />
     <Compile Include="Maps\MapOwnership.cs" />
+    <Compile Include="Packages\MapPackage.cs" />
+    <Compile Include="Packages\ObjGeometry.cs" />
+    <Compile Include="Packages\PngTexture.cs" />
     <Compile Include="Editing\MarkerEditingService.cs" />
   </ItemGroup>
 </Project>

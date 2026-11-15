@@ -68,6 +68,8 @@ namespace FIHMapEditor
         public OnlineMapService OnlineMaps { get; private set; }
         public CatalogSyncService CatalogSync { get; private set; }
         public VoiceClipService VoiceClips { get; private set; }
+        public PackageGeometryRuntime PackageGeometry { get; private set; }
+        public PackageBehaviorHost PackageBehaviors { get; private set; }
         public IMapRepository Maps { get; }
         public EditorFeatureRegistry Features { get; }
         public MarkerEditingService Markers { get; }
@@ -163,6 +165,8 @@ namespace FIHMapEditor
         // Scene / lifecycle tracking
         private string _lastSceneName = "";
         private MapFile _workingSnapshot;           // refreshed on every mutation; survives scene reloads
+        private List<MapPackageAsset> _packageAssets = new List<MapPackageAsset>();
+        private string _packageCodeHash;
         private bool _pendingReapply = false;
         private float _reapplyRetryAt = 0f;
 
@@ -201,7 +205,12 @@ namespace FIHMapEditor
             Input = new InputHandler();
             Fly = new FlyController(Finder, Input);
             Catalog = new ObjectCatalog(Finder);
-            PlacedManager = new PlacedObjectManager();
+            PlacedManager = new PlacedObjectManager(Finder);
+            PackageGeometry = new PackageGeometryRuntime();
+            PackageBehaviors = new PackageBehaviorHost(Finder);
+            Catalog.PackageSourceResolver = PackageGeometry.Resolve;
+            PlacedManager.OnPlaced = PackageBehaviors.OnPlaced;
+            PlacedManager.OnRemoved = PackageBehaviors.OnRemoved;
             SelectionSys = new SelectionSystem(Finder, PlacedManager, Catalog);
             Highlight = new HighlightRenderer();
             Gizmo = new GizmoController();
@@ -424,6 +433,7 @@ namespace FIHMapEditor
                 }
 
                 Features.Update();
+                if (Mode != EditorMode.Editor) PackageBehaviors.Update(Time.deltaTime);
                 UpdateAutosave();
             }
             catch (Exception ex)
@@ -2395,6 +2405,8 @@ namespace FIHMapEditor
                 SoccerGoals = new List<SoccerGoalData>(SoccerGoals),
                 Scoreboard = Scoreboard,
                 VoiceTriggers = new List<VoiceTriggerData>(VoiceTriggers),
+                PackageAssets = _packageAssets,
+                PackageCodeHash = _packageCodeHash,
             };
         }
 
@@ -2433,6 +2445,11 @@ namespace FIHMapEditor
         public void NewMap(bool silent = false)
         {
             PlacedManager.WipeAll();
+            _packageAssets = new List<MapPackageAsset>();
+            _packageCodeHash = null;
+            PackageBehaviors.SetAssets(_packageAssets, null);
+            PackageGeometry.SetAssets(_packageAssets);
+            Catalog.SetPackageEntries(PackageGeometry.Names);
             LevelEdits.RestoreAll();
             SelectionSys.Deselect();
             BlankCanvas.Restore();
@@ -2545,6 +2562,7 @@ namespace FIHMapEditor
         public void UploadCurrentMap(bool editable)
         {
             if (!OnlineMaps.Configured) { ShowToast("Online maps not configured"); return; }
+            if (_packageAssets.Count > 0) { ShowToast("Packaged geometry maps must be shared as .fihmap.zip files"); return; }
             if (ReadOnly) { ShowToast("Play-only maps cannot be uploaded"); return; }
             if (!HasWorkingContent()) { ShowToast("Nothing to upload — the map is empty"); return; }
             // A play-only map without a spawn would "play from wherever you stand" —
@@ -2958,6 +2976,11 @@ namespace FIHMapEditor
             if (!Catalog.HasScanned) Catalog.Scan();
 
             PlacedManager.WipeAll();
+            _packageAssets = map.PackageAssets ?? new List<MapPackageAsset>();
+            _packageCodeHash = map.PackageCodeHash;
+            PackageBehaviors.SetAssets(_packageAssets, _packageCodeHash);
+            PackageGeometry.SetAssets(_packageAssets);
+            Catalog.SetPackageEntries(PackageGeometry.Names);
 
             LevelEdits.RestoreAll();
             SelectionSys.Deselect();
@@ -3074,6 +3097,24 @@ namespace FIHMapEditor
             // a ground-contact refresh so IsTouchingGround doesn't stay true forever
             // (the "infinite jump after changing maps" bug).
             GroundContactFix.ScheduleAfterMapSwap();
+        }
+
+        public bool HasUntrustedPackageCode => PackageBehaviors.HasCode && !PackageBehaviors.CodeEnabled;
+        public bool CurrentMapIsPackage => _packageAssets.Count > 0;
+
+        public void TrustCurrentPackageCode()
+        {
+            if (!PackageBehaviors.HasCode) return;
+            try
+            {
+                PackageBehaviors.TrustAndEnable(PlacedManager.Placed);
+                ShowToast(PackageBehaviors.CodeEnabled ? "Map C# code enabled" : "Map C# failed to compile; check the log");
+            }
+            catch (Exception ex)
+            {
+                MapEditorPlugin.Logger.LogError($"[PACKAGE] Could not enable code: {ex}");
+                ShowToast("Could not enable map C#: " + ex.Message);
+            }
         }
 
         // ──────────────────────────────────────────────────────── edit operations ──

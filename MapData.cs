@@ -162,9 +162,10 @@ namespace FIHMapEditor
         // on checkpoints/reset zones; CustomColor. v8: box-shaped checkpoints
         // (CheckpointData.Size/Rot). v9: soccer mode (Ball + SoccerGoals). v10: placeable
         // 3D scoreboard. v12: voice triggers + OwnerSteamId. v13: settings for the other
-        // release-game network interactables. Older files load fine — missing
+        // release-game network interactables. v14: packaged OBJ geometry references.
+        // Older files load fine — missing
         // fields stay at defaults and Uids are backfilled on load.
-        public const int CURRENT_FORMAT_VERSION = 13;
+        public const int CURRENT_FORMAT_VERSION = 14;
 
         public int FormatVersion { get; set; } = CURRENT_FORMAT_VERSION;
         // Stable per-map identity for the leaderboard and the online map library. Minted
@@ -193,6 +194,10 @@ namespace FIHMapEditor
         public List<SoccerGoalData> SoccerGoals { get; set; } = new List<SoccerGoalData>();
         public ScoreboardData Scoreboard { get; set; }
         public List<VoiceTriggerData> VoiceTriggers { get; set; } = new List<VoiceTriggerData>();
+        // Archive contents live beside map.fihmap.json in a .fihmap.zip. A field is
+        // intentional: System.Text.Json serializes the map DTO, not binary assets.
+        public List<MapPackageAsset> PackageAssets = new List<MapPackageAsset>();
+        public string PackageCodeHash;
     }
 
 #if !FIH_CORE

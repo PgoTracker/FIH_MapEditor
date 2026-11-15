@@ -12,3 +12,4 @@ graphify-out/
 
 # Stray release packages (release zips are built under bin/)
 *.zip
+!Examples/PackagedGeometry/*.fihmap.zip

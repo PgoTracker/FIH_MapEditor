@@ -1,8 +1,12 @@
 @echo off
 setlocal
 
-set GAMEDIR=I:\SteamLibrary\steamapps\common\Flipping is Hard
-set PLUGINDIR=%GAMEDIR%\BepInEx\plugins\FIHMapEditor
+if "%~1"=="" (
+    set "GAMEDIR=%~dp0.."
+) else (
+    set "GAMEDIR=%~1"
+)
+set "PLUGINDIR=%GAMEDIR%\BepInEx\plugins\FIHMapEditor"
 
 echo Building FIH Custom Map Editor...
 dotnet build -c Debug
@@ -11,6 +15,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if not exist "%GAMEDIR%\BepInEx" (
+    echo DEPLOY FAILED - BepInEx is not active at %GAMEDIR%
+    exit /b 1
+)
 if not exist "%PLUGINDIR%" mkdir "%PLUGINDIR%"
 if not exist "%PLUGINDIR%\Maps" mkdir "%PLUGINDIR%\Maps"
 
@@ -19,6 +27,10 @@ if errorlevel 1 (
     echo DEPLOY FAILED - is the game path correct?
     exit /b 1
 )
+copy /Y "bin\Debug\net6.0\Microsoft.CodeAnalysis.dll" "%PLUGINDIR%\"
+if errorlevel 1 exit /b 1
+copy /Y "bin\Debug\net6.0\Microsoft.CodeAnalysis.CSharp.dll" "%PLUGINDIR%\"
+if errorlevel 1 exit /b 1
 
 echo.
 echo Deployed to %PLUGINDIR%

@@ -69,6 +69,55 @@ namespace FIHMapEditor
                 $"[PREVIEW] Generated cache='{_diskCacheDirectory}', bundled='{_bundledPreviewDirectory}'.");
         }
 
+        // Packaged assets can keep the same name while their OBJ, PNG or material
+        // changes. Their old disk thumbnail must never outrank the current package.
+        public void InvalidatePackaged()
+        {
+            if (_pendingPath != null && IsPackaged(_pendingPath))
+            {
+                _cache.Remove(_pendingPath);
+                _pendingTarget?.Release();
+                if (_pendingTarget != null) UnityEngine.Object.DestroyImmediate(_pendingTarget);
+                _pendingTarget = null;
+                _pendingPath = null;
+            }
+            var paths = new List<string>();
+            foreach (var path in _cache.Keys)
+                if (IsPackaged(path)) paths.Add(path);
+            foreach (var path in paths)
+            {
+                var texture = _cache[path];
+                if (texture is RenderTexture target) target.Release();
+                if (texture != null) UnityEngine.Object.DestroyImmediate(texture);
+                _cache.Remove(path);
+            }
+            _failed.RemoveWhere(IsPackaged);
+            _queued.RemoveWhere(IsPackaged);
+            _queuedVisible.RemoveWhere(IsPackaged);
+            paths.Clear();
+            foreach (var path in _retryAfter.Keys) if (IsPackaged(path)) paths.Add(path);
+            foreach (var path in paths) _retryAfter.Remove(path);
+            paths.Clear();
+            foreach (var path in _lastRequested.Keys) if (IsPackaged(path)) paths.Add(path);
+            foreach (var path in paths) _lastRequested.Remove(path);
+            RemovePackagedFromQueue(_queue);
+            RemovePackagedFromQueue(_visibleQueue);
+            _preparedCatalogVersion = -1;
+        }
+
+        private static bool IsPackaged(string path)
+            => path != null && path.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal);
+
+        private static void RemovePackagedFromQueue(Queue<CatalogEntry> queue)
+        {
+            int count = queue.Count;
+            for (int i = 0; i < count; i++)
+            {
+                var entry = queue.Dequeue();
+                if (entry != null && !IsPackaged(entry.SourcePath)) queue.Enqueue(entry);
+            }
+        }
+
         public Texture Request(CatalogEntry entry)
         {
             if (entry == null || string.IsNullOrEmpty(entry.SourcePath)) return null;
@@ -85,7 +134,7 @@ namespace FIHMapEditor
             // generation belongs in the throttled queue; delaying cached files made a
             // populated bundle look indistinguishable from six fresh renders.
             string fileName = CacheFileName(path);
-            if (DiskFiles.Contains(fileName) || BundledFiles.Contains(fileName))
+            if (!IsPackaged(path) && (DiskFiles.Contains(fileName) || BundledFiles.Contains(fileName)))
             {
                 if (Time.frameCount != _diskLoadFrame)
                 {
@@ -236,7 +285,8 @@ namespace FIHMapEditor
                 if (entry == null || string.IsNullOrEmpty(entry.SourcePath)
                     || _cache.ContainsKey(entry.SourcePath) || _failed.Contains(entry.SourcePath)) continue;
                 string fileName = CacheFileName(entry.SourcePath);
-                if (DiskFiles.Contains(fileName) || BundledFiles.Contains(fileName)) continue;
+                if (!IsPackaged(entry.SourcePath)
+                    && (DiskFiles.Contains(fileName) || BundledFiles.Contains(fileName))) continue;
                 if (_queued.Add(entry.SourcePath)) _queue.Enqueue(entry);
             }
 
@@ -299,6 +349,7 @@ namespace FIHMapEditor
 
         private void SaveToDisk(string sourcePath, Texture2D texture)
         {
+            if (IsPackaged(sourcePath)) return;
             try
             {
                 Directory.CreateDirectory(_diskCacheDirectory);

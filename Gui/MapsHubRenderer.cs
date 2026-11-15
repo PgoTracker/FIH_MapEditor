@@ -150,7 +150,13 @@ namespace FIHMapEditor
                 Close();
             }
             if (_win.Button(new Rect(345, y, 90, 26), "Refresh")) Refresh();
-            GUI.Label(new Rect(445, y + 5, 190, 20), $"{_maps.Count} local map(s)", _styleSmall);
+            if (_c.HasUntrustedPackageCode)
+            {
+                GUI.backgroundColor = new Color(0.9f, 0.55f, 0.25f);
+                if (_win.Button(new Rect(445, y, 175, 26), "ENABLE MAP C#")) _c.TrustCurrentPackageCode();
+                GUI.backgroundColor = Color.white;
+            }
+            else GUI.Label(new Rect(445, y + 5, 190, 20), $"{_maps.Count} local map(s)", _styleSmall);
         }
 
         private void DrawLocalList(float y)

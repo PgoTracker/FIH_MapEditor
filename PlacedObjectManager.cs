@@ -135,6 +135,7 @@ namespace FIHMapEditor
     // tinting, deletion and wiping.
     public class PlacedObjectManager
     {
+        private readonly GameObjectFinder _finder;
         private readonly List<PlacedObject> _placed = new List<PlacedObject>();
         private readonly Dictionary<int, PlacedObject> _byRootId = new Dictionary<int, PlacedObject>();
 
@@ -156,6 +157,13 @@ namespace FIHMapEditor
 
         public IReadOnlyList<PlacedObject> Placed => _placed;
         public int Count => _placed.Count;
+        public Action<PlacedObject> OnPlaced;
+        public Action<PlacedObject> OnRemoved;
+
+        public PlacedObjectManager(GameObjectFinder finder)
+        {
+            _finder = finder;
+        }
 
         private GameObject GetSpawnRoot()
         {
@@ -180,6 +188,7 @@ namespace FIHMapEditor
         // The scene reload destroyed the map root and all clones; drop the stale registry.
         public void OnSceneChanged()
         {
+            foreach (var placed in _placed) OnRemoved?.Invoke(placed);
             _placed.Clear();
             _byRootId.Clear();
             // FishNet reuses ObjectIds in the next scene: a stale id would adopt some
@@ -287,6 +296,8 @@ namespace FIHMapEditor
                 // mesh, BoxCollider fallback) so the clone enters the normal picking +
                 // physics path the same way the original collider-bearing sources do.
                 if (!isMechanic) EnsureColliders(clone);
+                if (sourcePath != null && sourcePath.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal))
+                    SetPackagedCollisionLayer(clone, sourceName);
 
                 var placed = new PlacedObject
                 {
@@ -312,7 +323,11 @@ namespace FIHMapEditor
                 // in its GroundRegistry, keyed per collider — register the clone's so it
                 // behaves exactly like the original it was copied from.
                 GroundRegistrar.RegisterClone(clone, source);
-                placed.RearmOnMove = isMechanic;
+                // Scripted package objects can animate their transform in Play. Reuse
+                // the authored-pose lifecycle so saves/sync keep the editor pose and
+                // switching back to Editor restores it.
+                placed.RearmOnMove = isMechanic
+                    || (sourcePath != null && sourcePath.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal));
                 placed.AuthoredParts = authoredParts;
                 placed.WorldAnchors = worldAnchors;
                 MarkArmed(placed);
@@ -320,6 +335,7 @@ namespace FIHMapEditor
                 _placed.Add(placed);
                 _byRootId[clone.GetInstanceID()] = placed;
                 ApplyPlacementColor(placed, tint, restore);
+                OnPlaced?.Invoke(placed);
 
                 return placed;
             }
@@ -1104,6 +1120,59 @@ namespace FIHMapEditor
         // ramps next to it.
         private const float MaxBackfillColliderSize = 40f;
 
+        // The game's player layer can ignore Unity's Default layer. OBJ templates are
+        // created on Default, so their MeshCollider exists but the player passes through.
+        // Match a nearby solid level surface that the player can actually collide with.
+        private void SetPackagedCollisionLayer(GameObject clone, string name)
+        {
+            try
+            {
+                var player = _finder?.FindPlayer();
+                var playerCol = player?.GetComponentInChildren<Collider>(false);
+                if (playerCol == null) return;
+                int playerLayer = playerCol.gameObject.layer;
+                int layer = 0;
+                if (Physics.GetIgnoreLayerCollision(layer, playerLayer))
+                {
+                    var playerT = player.transform;
+                    var hits = Physics.RaycastAll(new Ray(playerT.position + Vector3.up * 0.5f, Vector3.down), 30f);
+                    float nearest = float.MaxValue;
+                    foreach (var hit in hits)
+                    {
+                        var col = hit.collider;
+                        if (col == null || col.isTrigger || col.transform.root == playerT.root) continue;
+                        int candidate = col.gameObject.layer;
+                        if (candidate == HiddenLayer.Layer || Physics.GetIgnoreLayerCollision(candidate, playerLayer)) continue;
+                        if (hit.distance >= nearest) continue;
+                        nearest = hit.distance;
+                        layer = candidate;
+                    }
+                    if (nearest == float.MaxValue)
+                    {
+                        // The map can load before the player lands. Use any layer
+                        // permitted by the game's collision matrix in that case.
+                        layer = -1;
+                        for (int candidate = 0; candidate < 32; candidate++)
+                            if (candidate != HiddenLayer.Layer
+                                && !Physics.GetIgnoreLayerCollision(candidate, playerLayer))
+                            { layer = candidate; break; }
+                        if (layer < 0)
+                        {
+                            MapEditorPlugin.Logger.LogWarning($"[PACKAGE] '{name}' has no layer that collides with player layer {playerLayer}.");
+                            return;
+                        }
+                    }
+                }
+                foreach (var col in clone.GetComponentsInChildren<Collider>(true))
+                    if (col != null && !col.isTrigger) col.gameObject.layer = layer;
+                MapEditorPlugin.Logger.LogInfo($"[PACKAGE] '{name}' collision layer {layer} (player layer {playerLayer}).");
+            }
+            catch (Exception ex)
+            {
+                MapEditorPlugin.Logger.LogWarning($"[PACKAGE] Could not set collision layer for '{name}': {ex.Message}");
+            }
+        }
+
         private static void EnsureColliders(GameObject root)
         {
             try
@@ -1292,6 +1361,7 @@ namespace FIHMapEditor
         public void Delete(PlacedObject placed)
         {
             if (placed == null) return;
+            OnRemoved?.Invoke(placed);
             _placed.Remove(placed);
             if (placed.Root != null)
             {
@@ -1314,6 +1384,7 @@ namespace FIHMapEditor
         {
             foreach (var p in _placed)
             {
+                OnRemoved?.Invoke(p);
                 if (p.NetworkSpawner != null)
                 {
                     try { p.NetworkSpawner.NetworkSceneDeInit(); } catch { }

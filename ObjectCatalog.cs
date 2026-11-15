@@ -44,6 +44,37 @@ namespace FIHMapEditor
         public const string ASSET_PREFIX = "asset://";
         public const string ADDRESSABLE_PREFIX = "addressable://";
         public const string ASSET_CATEGORY = "GameFiles";
+        private readonly List<CatalogEntry> _packageEntries = new List<CatalogEntry>();
+        public Func<string, GameObject> PackageSourceResolver;
+
+        public void SetPackageEntries(IEnumerable<string> names)
+        {
+            Previews.InvalidatePackaged();
+            Entries.RemoveAll(e => e.SourcePath != null && e.SourcePath.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal));
+            _packageEntries.Clear();
+            foreach (var name in names ?? Array.Empty<string>())
+                _packageEntries.Add(new CatalogEntry
+                {
+                    DisplayName = name,
+                    SourcePath = MapPackage.SourceFor(name),
+                    Category = "Custom geometry",
+                    BoundsSize = Vector3.one,
+                    HasCollider = true,
+                });
+            MergePackageEntries();
+            Entries.Sort((a, b) => string.CompareOrdinal(a.DisplayName, b.DisplayName));
+            Categories.Clear();
+            foreach (var entry in Entries)
+                if (!Categories.Contains(entry.Category)) Categories.Add(entry.Category);
+            Categories.Sort();
+            ScanVersion++;
+        }
+
+        private void MergePackageEntries()
+        {
+            foreach (var entry in _packageEntries)
+                if (!Entries.Contains(entry)) Entries.Add(entry);
+        }
 
         private readonly Dictionary<string, IResourceLocation> _addressableLocations =
             new Dictionary<string, IResourceLocation>(StringComparer.OrdinalIgnoreCase);
@@ -259,6 +290,7 @@ namespace FIHMapEditor
         public void Clear()
         {
             Entries.Clear();
+            _packageEntries.Clear();
             Categories.Clear();
             ColliderlessRoots.Clear();
             _seen.Clear();
@@ -467,6 +499,7 @@ namespace FIHMapEditor
             double otherMs = phase.Elapsed.TotalMilliseconds - collidersMs - renderersMs;
 
             phase.Start();
+            MergePackageEntries();
             Entries.Sort((a, b) => string.CompareOrdinal(a.DisplayName, b.DisplayName));
 
             Categories.Clear();
@@ -1283,6 +1316,8 @@ namespace FIHMapEditor
         // exact path → path ignoring #indices → catalog entry by leaf name.
         public GameObject ResolveSource(string path, string sourceName)
         {
+            if (path != null && path.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal))
+                return PackageSourceResolver?.Invoke(path);
             if (!string.IsNullOrEmpty(path) && path.StartsWith(ADDRESSABLE_PREFIX))
             {
                 var asset = LoadAddressable(path.Substring(ADDRESSABLE_PREFIX.Length));
@@ -1426,6 +1461,7 @@ namespace FIHMapEditor
             _addressableRetryAt = Time.unscaledTime + 5f;
             ScanAddressableAssets(_seen);
             if (_addressableDiscoveryComplete) PruneCatalogToAddressables();
+            MergePackageEntries();
             if (Entries.Count == before) return;
 
             Entries.Sort((a, b) => string.CompareOrdinal(a.DisplayName, b.DisplayName));
@@ -1445,9 +1481,11 @@ namespace FIHMapEditor
                 var entry = Entries[i];
                 bool addressable = entry?.SourcePath != null
                     && entry.SourcePath.StartsWith(ADDRESSABLE_PREFIX);
+                bool packaged = entry?.SourcePath != null
+                    && entry.SourcePath.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal);
                 bool fihNamed = entry?.DisplayName != null
                     && entry.DisplayName.IndexOf("FIH", StringComparison.OrdinalIgnoreCase) >= 0;
-                if (addressable && !fihNamed) continue;
+                if ((addressable && !fihNamed) || packaged) continue;
                 Entries.RemoveAt(i);
                 removed++;
             }
@@ -1482,6 +1520,8 @@ namespace FIHMapEditor
         public GameObject GetLiveSource(CatalogEntry entry)
         {
             if (entry.Source != null) return entry.Source;
+            if (entry.SourcePath != null && entry.SourcePath.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal))
+                return entry.Source = PackageSourceResolver?.Invoke(entry.SourcePath);
             if (entry.SourcePath != null && entry.SourcePath.StartsWith(ADDRESSABLE_PREFIX))
             {
                 entry.Source = LoadAddressable(entry.SourcePath.Substring(ADDRESSABLE_PREFIX.Length));

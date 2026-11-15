@@ -432,7 +432,16 @@ the same setup once and both work.
 
 ## Sharing maps (files)
 
-A map is a single `.fihmap.json` file. Send it to someone, they drop it into their
+Maps with custom OBJ geometry and matching C# behavior source use a single
+`.fihmap.zip` archive. See [PACKAGED_GEOMETRY.md](PACKAGED_GEOMETRY.md) for the
+archive layout, authoring workflow, and code trust control.
+The ready-to-load [Spinner example](Examples/PackagedGeometry/PackagedGeometryExample.fihmap.zip)
+includes its OBJ, original PNG texture, and matching C# behavior; copy it into
+`BepInEx/plugins/FIHMapEditor/Maps/` to try it.
+Packaged geometry requires a plugin build from this fork; the upstream release
+linked in Installation does not contain these changes.
+
+Without custom assets, a map is a single `.fihmap.json` file. Send it to someone, they drop it into their
 `Maps` folder and load it from the Maps Hub (`F7`). Objects are re-created by cloning
 the assets from their own copy of the game — the file contains no game content.
 
@@ -443,8 +452,9 @@ setup-libs.bat   # copies the game's interop DLLs into lib\ (not distributed)
 build.bat        # builds and deploys to the game
 ```
 
-Requires the .NET 6 SDK. `build.bat` assumes the game at
-`I:\SteamLibrary\steamapps\common\Flipping is Hard Demo` — edit it if your path differs.
+Requires the .NET 6 SDK. `build.bat` uses the repository's parent directory as
+the game directory; pass a game path as its first argument if the repository is
+elsewhere.
 
 The `FIHMapEditor.slnx` solution includes the runtime plugin, Unity-independent core,
 and test suite. See [REFACTOR_AND_ADDITIONS.md](REFACTOR_AND_ADDITIONS.md) for a tour of

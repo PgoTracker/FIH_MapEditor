@@ -48,6 +48,7 @@ namespace FIHMapEditor
 
         // fileName is a repository slot (already sanitized), never a user-supplied path.
         public static string PathFor(string fileName) => Path.Combine(MapsDir, fileName + EXTENSION);
+        public static string PackagePathFor(string fileName) => Path.Combine(MapsDir, fileName + MapPackage.Extension);
 
         // In-memory (de)serialization for the online map library (upload/download).
         public static string ToJson(MapFile map) => JsonSerializer.Serialize(map, Options);
@@ -67,8 +68,15 @@ namespace FIHMapEditor
         public static void Save(MapFile map, string fileName)
         {
             Directory.CreateDirectory(MapsDir);
+            if ((map.PackageAssets?.Count ?? 0) > 0 || File.Exists(PackagePathFor(fileName)))
+            {
+                MapPackage.Write(PackagePathFor(fileName), map);
+                if (File.Exists(PathFor(fileName))) File.Delete(PathFor(fileName));
+                return;
+            }
             string json = JsonSerializer.Serialize(map, Options);
             File.WriteAllText(PathFor(fileName), json);
+            if (File.Exists(PackagePathFor(fileName))) File.Delete(PackagePathFor(fileName));
         }
 
         // Two-slot autosave: the previous autosave is kept as *_prev so a fresh session
@@ -78,8 +86,16 @@ namespace FIHMapEditor
             Directory.CreateDirectory(MapsDir);
             try
             {
-                if (File.Exists(PathFor(AUTOSAVE_NAME)))
-                    File.Copy(PathFor(AUTOSAVE_NAME), PathFor(AUTOSAVE_PREV_NAME), overwrite: true);
+                string oldSuffix = File.Exists(PackagePathFor(AUTOSAVE_NAME))
+                    ? MapPackage.Extension : EXTENSION;
+                string oldPath = Path.Combine(MapsDir, AUTOSAVE_NAME + oldSuffix);
+                if (File.Exists(oldPath))
+                {
+                    File.Copy(oldPath, Path.Combine(MapsDir, AUTOSAVE_PREV_NAME + oldSuffix), overwrite: true);
+                    string otherSuffix = oldSuffix == EXTENSION ? MapPackage.Extension : EXTENSION;
+                    string stalePrev = Path.Combine(MapsDir, AUTOSAVE_PREV_NAME + otherSuffix);
+                    if (File.Exists(stalePrev)) File.Delete(stalePrev);
+                }
             }
             catch { }
             Save(map, AUTOSAVE_NAME);
@@ -87,6 +103,7 @@ namespace FIHMapEditor
 
         public static MapFile Load(string fileName)
         {
+            if (File.Exists(PackagePathFor(fileName))) return MapPackage.Read(PackagePathFor(fileName));
             string json = File.ReadAllText(PathFor(fileName));
             var map = JsonSerializer.Deserialize<MapFile>(json, Options);
             if (map == null) throw new InvalidDataException("Map file deserialized to null");
@@ -102,9 +119,11 @@ namespace FIHMapEditor
         {
             string path = PathFor(fileName);
             if (File.Exists(path)) File.Delete(path);
+            path = PackagePathFor(fileName);
+            if (File.Exists(path)) File.Delete(path);
         }
 
-        public static bool Exists(string fileName) => File.Exists(PathFor(fileName));
+        public static bool Exists(string fileName) => File.Exists(PathFor(fileName)) || File.Exists(PackagePathFor(fileName));
 
         public static List<MapFileInfo> ListMaps()
         {
@@ -112,19 +131,29 @@ namespace FIHMapEditor
             try
             {
                 if (!Directory.Exists(MapsDir)) return result;
+                var files = new List<string>(Directory.GetFiles(MapsDir, "*" + MapPackage.Extension));
+                var packageSlots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var file in files)
+                    packageSlots.Add(Path.GetFileName(file).Substring(0, Path.GetFileName(file).Length - MapPackage.Extension.Length));
                 foreach (var file in Directory.GetFiles(MapsDir, "*" + EXTENSION))
+                    if (!packageSlots.Contains(Path.GetFileName(file).Substring(0, Path.GetFileName(file).Length - EXTENSION.Length))) files.Add(file);
+                foreach (var file in files)
                 {
                     // List view reads only enough JSON for a label/count. A malformed map stays
                     // visible as a deletable row rather than making the whole hub fail.
                     var info = new MapFileInfo
                     {
-                        FileName = Path.GetFileName(file).Replace(EXTENSION, ""),
+                        FileName = Path.GetFileName(file).Substring(0, Path.GetFileName(file).Length
+                            - (file.EndsWith(MapPackage.Extension, StringComparison.OrdinalIgnoreCase)
+                                ? MapPackage.Extension.Length : EXTENSION.Length)),
                         LastWrite = File.GetLastWriteTime(file),
                     };
                     info.IsAutosave = info.FileName.StartsWith(AUTOSAVE_NAME);
                     try
                     {
-                        var map = JsonSerializer.Deserialize<MapFile>(File.ReadAllText(file), Options);
+                        var map = file.EndsWith(MapPackage.Extension, StringComparison.OrdinalIgnoreCase)
+                            ? MapPackage.Read(file)
+                            : JsonSerializer.Deserialize<MapFile>(File.ReadAllText(file), Options);
                         info.MapName = map?.Name ?? info.FileName;
                         info.ObjectCount = map?.Objects?.Count ?? 0;
                     }
