@@ -16,8 +16,17 @@ namespace FIHMapEditor
         private readonly List<Mesh> _meshes = new List<Mesh>();
         private readonly List<Material> _materials = new List<Material>();
         private readonly List<Texture2D> _textures = new List<Texture2D>();
+        private Material _surfaceMaterial;
 
         public IEnumerable<string> Names => _assets.Keys;
+
+        public void CaptureSurfaceMaterial()
+        {
+            if (_surfaceMaterial != null) return;
+            _surfaceMaterial = FindVisibleOpaqueMaterial();
+            if (_surfaceMaterial != null)
+                MapEditorPlugin.Logger.LogInfo($"[PACKAGE] Captured surface material '{_surfaceMaterial.name}' with shader '{_surfaceMaterial.shader.name}'.");
+        }
 
         public void SetAssets(IEnumerable<MapPackageAsset> assets)
         {
@@ -66,16 +75,25 @@ namespace FIHMapEditor
                 UnityEngine.Object.DontDestroyOnLoad(template);
                 template.AddComponent<MeshFilter>().sharedMesh = mesh;
                 var renderer = template.AddComponent<MeshRenderer>();
-                var sourceMaterial = FindVisibleOpaqueMaterial();
+                var sourceMaterial = _surfaceMaterial != null ? _surfaceMaterial : FindVisibleOpaqueMaterial();
                 var shader = sourceMaterial != null ? sourceMaterial.shader : FindTextureShader();
                 if (shader != null && shader.isSupported)
                 {
                     // A shader found by name may be stripped of the variant this
-                    // player build uses. Clone a material that is visibly rendering
-                    // in the level, then replace every common texture slot.
+                    // player build uses. Clone a loaded opaque surface material.
                     var material = sourceMaterial != null ? new Material(sourceMaterial) : new Material(shader);
                     _materials.Add(material);
-                    MapEditorPlugin.Logger.LogInfo($"[PACKAGE] '{name}' uses visible shader '{shader.name}' from '{sourceMaterial?.name ?? "shader fallback"}' (PNG bytes: {asset.Texture?.Length ?? 0}).");
+                    MapEditorPlugin.Logger.LogInfo($"[PACKAGE] '{name}' uses opaque shader '{shader.name}' from '{sourceMaterial?.name ?? "shader fallback"}' (PNG bytes: {asset.Texture?.Length ?? 0}).");
+                    // Clear *every* inherited texture, including game-specific
+                    // shader slots. Plain package assets must not inherit artwork.
+                    foreach (string slot in material.GetTexturePropertyNames())
+                        if (material.HasProperty(slot)) material.SetTexture(slot, null);
+                    if (material.HasProperty("_BaseMap")) material.SetTexture("_BaseMap", Texture2D.whiteTexture);
+                    if (material.HasProperty("_MainTex")) material.SetTexture("_MainTex", Texture2D.whiteTexture);
+                    if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", Color.white);
+                    if (material.HasProperty("_Color")) material.SetColor("_Color", Color.white);
+                    material.mainTextureScale = Vector2.one;
+                    material.mainTextureOffset = Vector2.zero;
                     if (asset.Texture != null)
                     {
                         var decoded = PngTexture.Decode(asset.Texture);
@@ -87,18 +105,8 @@ namespace FIHMapEditor
                         texture.filterMode = FilterMode.Bilinear;
                         texture.wrapMode = TextureWrapMode.Repeat;
                         _textures.Add(texture);
-                        foreach (string slot in new[]
-                        {
-                            "_BumpMap", "_NormalMap", "_MetallicGlossMap", "_OcclusionMap",
-                            "_EmissionMap", "_DetailAlbedoMap", "_DetailNormalMap", "_MaskMap", "_HeightMap"
-                        })
-                            if (material.HasProperty(slot)) material.SetTexture(slot, null);
                         if (material.HasProperty("_BaseMap")) material.SetTexture("_BaseMap", texture);
                         if (material.HasProperty("_MainTex")) material.SetTexture("_MainTex", texture);
-                        if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", Color.white);
-                        if (material.HasProperty("_Color")) material.SetColor("_Color", Color.white);
-                        material.mainTextureScale = Vector2.one;
-                        material.mainTextureOffset = Vector2.zero;
                         MapEditorPlugin.Logger.LogInfo($"[PACKAGE] Loaded texture '{name}' ({texture.width}x{texture.height}).");
                     }
                     renderer.sharedMaterial = material;
@@ -125,16 +133,42 @@ namespace FIHMapEditor
                 Material candidate;
                 try { candidate = renderer.sharedMaterial; }
                 catch { continue; }
-                if (candidate == null || candidate.shader == null || !candidate.shader.isSupported
-                    || candidate.renderQueue > 2500
-                    || (!candidate.HasProperty("_BaseMap") && !candidate.HasProperty("_MainTex"))) continue;
+                if (!IsOpaqueSurfaceMaterial(candidate)) continue;
                 string shaderName = candidate.shader.name ?? "";
                 if (shaderName.IndexOf("Lit", StringComparison.OrdinalIgnoreCase) >= 0
-                    && shaderName.IndexOf("Unlit", StringComparison.OrdinalIgnoreCase) < 0)
+                    || shaderName.IndexOf("PBR", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return candidate;
+                fallback ??= candidate;
+            }
+            // Blank maps hide the level before package assets are resolved. Its
+            // ordinary materials remain loaded even when no renderer is visible.
+            foreach (var candidate in Resources.FindObjectsOfTypeAll<Material>())
+            {
+                if (!IsOpaqueSurfaceMaterial(candidate)) continue;
+                string shaderName = candidate.shader.name ?? "";
+                if (shaderName.Equals("Universal Render Pipeline/Lit", StringComparison.OrdinalIgnoreCase))
+                    return candidate;
+                if (shaderName.IndexOf("Lit", StringComparison.OrdinalIgnoreCase) >= 0
+                    || shaderName.IndexOf("PBR", StringComparison.OrdinalIgnoreCase) >= 0)
                     return candidate;
                 fallback ??= candidate;
             }
             return fallback;
+        }
+
+        private static bool IsOpaqueSurfaceMaterial(Material material)
+        {
+            if (material == null || material.shader == null || !material.shader.isSupported
+                || material.renderQueue > 2500
+                || (!material.HasProperty("_BaseMap") && !material.HasProperty("_MainTex"))) return false;
+            string shaderName = material.shader.name ?? "";
+            foreach (string excluded in new[]
+            {
+                "Sticker", "Decal", "Particle", "UI/", "Sprite", "Unlit",
+                "Hidden/", "Blit", "PostProcess", "Skybox"
+            })
+                if (shaderName.IndexOf(excluded, StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            return true;
         }
 
         private static Shader FindTextureShader()

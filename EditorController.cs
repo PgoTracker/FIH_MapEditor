@@ -3022,6 +3022,8 @@ namespace FIHMapEditor
             }
             BaseMode = map.BaseMode;
 
+            // Keep a rendered level material before Blank disables its renderers.
+            PackageGeometry.CaptureSurfaceMaterial();
             if (BaseMode == MapBaseMode.Blank) BlankCanvas.Apply();
             else BlankCanvas.Restore();
 
