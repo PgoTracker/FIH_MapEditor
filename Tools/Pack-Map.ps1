@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$GeometryDir,
     [string]$ScriptsDir,
     [string]$TexturesDir,
+    [string]$SoundsDir,
     [Parameter(Mandatory = $true)][string]$OutputPath
 )
 
@@ -13,6 +14,7 @@ $mapFile = (Resolve-Path -LiteralPath $MapPath).Path
 $geometryFolder = (Resolve-Path -LiteralPath $GeometryDir).Path
 $scriptFolder = if ($ScriptsDir) { (Resolve-Path -LiteralPath $ScriptsDir).Path } else { $null }
 $textureFolder = if ($TexturesDir) { (Resolve-Path -LiteralPath $TexturesDir).Path } else { $null }
+$soundFolder = if ($SoundsDir) { (Resolve-Path -LiteralPath $SoundsDir).Path } else { $null }
 if (Test-Path -LiteralPath $OutputPath) { throw "Output already exists: $OutputPath" }
 if (-not $OutputPath.EndsWith('.fihmap.zip', [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Output file must end in .fihmap.zip.'
@@ -25,9 +27,11 @@ if ($geometry.Count -eq 0) { throw 'Geometry folder has no .obj files.' }
 if ($geometry.Count -gt 100) { throw 'A package can contain at most 100 OBJ files.' }
 $scripts = if ($scriptFolder) { @(Get-ChildItem -LiteralPath $scriptFolder -File -Filter '*.cs') } else { @() }
 $textures = if ($textureFolder) { @(Get-ChildItem -LiteralPath $textureFolder -File -Filter '*.png') } else { @() }
+$sounds = if ($soundFolder) { @(Get-ChildItem -LiteralPath $soundFolder -File | Where-Object Extension -In '.wav', '.ogg') } else { @() }
 $names = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $scriptNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $textureNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$soundNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($file in $geometry) {
     if ($file.BaseName -cnotmatch '^[A-Za-z_][A-Za-z0-9_]{0,79}$') { throw "Invalid OBJ name: $($file.Name)" }
     if (-not $names.Add($file.BaseName)) { throw "Duplicate OBJ name: $($file.Name)" }
@@ -57,10 +61,21 @@ foreach ($file in $textures) {
         throw "PNG dimensions must be 1–2048 pixels: $($file.Name)"
     }
 }
+foreach ($file in $sounds) {
+    if (-not $names.Contains($file.BaseName)) { throw "No matching OBJ for impact sound: $($file.Name)" }
+    if (-not $soundNames.Add($file.BaseName)) { throw "Duplicate impact sound: $($file.BaseName)" }
+    if ($file.Length -lt 12 -or $file.Length -gt 4MB) { throw "Impact sound must be 12 bytes to 4 MB: $($file.Name)" }
+    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+    $head = [System.Text.Encoding]::ASCII.GetString($bytes, 0, 4)
+    $wav = $file.Extension -eq '.wav' -and $head -eq 'RIFF' -and [System.Text.Encoding]::ASCII.GetString($bytes, 8, 4) -eq 'WAVE'
+    $ogg = $file.Extension -eq '.ogg' -and $head -eq 'OggS'
+    if (-not ($wav -or $ogg)) { throw "Impact sound must be WAV or Ogg: $($file.Name)" }
+}
 $totalBytes = (Get-Item -LiteralPath $mapFile).Length
 foreach ($file in $geometry) { $totalBytes += $file.Length }
 foreach ($file in $scripts) { $totalBytes += $file.Length }
 foreach ($file in $textures) { $totalBytes += $file.Length }
+foreach ($file in $sounds) { $totalBytes += $file.Length }
 if ($totalBytes -gt 64MB) { throw 'Package contents exceed 64 MB.' }
 foreach ($obj in @($map.Objects)) {
     if ($obj.Source -like 'package://*') {
@@ -83,6 +98,9 @@ try {
     }
     foreach ($file in $textures) {
         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, "textures/$($file.BaseName).png") | Out-Null
+    }
+    foreach ($file in $sounds) {
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, "sounds/$($file.Name)") | Out-Null
     }
 }
 catch {

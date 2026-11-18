@@ -21,13 +21,81 @@ namespace FIHMapEditor
     public sealed class PackagedGeometryContext
     {
         private readonly GameObjectFinder _finder;
+        private readonly MapPackageAsset _asset;
+        private readonly List<(Collider collider, PhysicsMaterial material)> _originalPhysics =
+            new List<(Collider, PhysicsMaterial)>();
+        private PhysicsMaterial _physicsMaterial;
+        private PackagedImpactSound _impactSound;
         public string Uid { get; }
         public string Name { get; }
         public GameObject Root { get; }
         public GameObject LocalPlayer => _finder?.FindPlayer();
-        public PackagedGeometryContext(PlacedObject placed, string name, GameObjectFinder finder)
+        public PackagedGeometryContext(PlacedObject placed, string name, GameObjectFinder finder,
+                                      MapPackageAsset asset = null)
         {
-            Uid = placed.Uid; Name = name; Root = placed.Root; _finder = finder;
+            Uid = placed.Uid; Name = name; Root = placed.Root; _finder = finder; _asset = asset;
+        }
+
+        // Ground settings also select the game's matching landing/impact sound.
+        // The Ground component is attached per packaged placement before registration.
+        public void SetGroundSurface(PackagedGroundSurface surface)
+            => PackageGroundSettings.Surface(Root, surface);
+
+        public void SetGroundSpinVelocity(PackagedSpinVelocity spin)
+            => PackageGroundSettings.Spin(Root, spin);
+
+        public void SetPhoneDestroyMode(PackagedPhoneDestroy mode)
+            => PackageGroundSettings.PhoneDestroy(Root, mode);
+
+        // PhysicsMaterial changes collision friction and bounce, separate from the
+        // game's Ground surface category. Values follow Unity's 0..1 range.
+        public void SetColliderPhysics(float staticFriction, float dynamicFriction, float bounciness)
+        {
+            if (Root == null) throw new InvalidOperationException("Packaged object was destroyed.");
+            foreach (float value in new[] { staticFriction, dynamicFriction, bounciness })
+                if (float.IsNaN(value) || value < 0f || value > 1f)
+                    throw new ArgumentOutOfRangeException(nameof(staticFriction), "Friction and bounce must be between 0 and 1.");
+            var previous = _physicsMaterial;
+            var material = new PhysicsMaterial("FIH " + Name + " " + Uid)
+            {
+                staticFriction = staticFriction,
+                dynamicFriction = dynamicFriction,
+                bounciness = bounciness,
+            };
+            foreach (var collider in Root.GetComponentsInChildren<Collider>(true))
+            {
+                if (collider == null || collider.isTrigger) continue;
+                if (_originalPhysics.TrueForAll(entry => entry.collider != collider))
+                    _originalPhysics.Add((collider, collider.sharedMaterial));
+                collider.sharedMaterial = material;
+            }
+            _physicsMaterial = material;
+            if (previous != null) UnityEngine.Object.Destroy(previous);
+        }
+
+        // The package may contain sounds/<asset>.wav or .ogg. Scripts opt in so a
+        // map can use the game's surface sound, its own sound, or both.
+        public bool EnablePackagedImpactSound(float minImpulse = 1f, float cooldown = 0.15f, float volume = 1f)
+        {
+            if (_asset?.ImpactSound == null || Root == null) return false;
+            if (minImpulse < 0f || cooldown < 0f || volume < 0f || volume > 1f)
+                throw new ArgumentOutOfRangeException(nameof(minImpulse));
+            PackagedImpactSound.EnsureRegistered();
+            _impactSound = Root.GetComponent<PackagedImpactSound>() ?? Root.AddComponent<PackagedImpactSound>();
+            _impactSound.Configure(_asset.ImpactSound, _asset.ImpactSoundExtension,
+                                   minImpulse, cooldown, volume);
+            return true;
+        }
+
+        internal void Cleanup()
+        {
+            if (_impactSound != null) UnityEngine.Object.Destroy(_impactSound);
+            _impactSound = null;
+            foreach (var (collider, material) in _originalPhysics)
+                if (collider != null) collider.sharedMaterial = material;
+            _originalPhysics.Clear();
+            if (_physicsMaterial != null) UnityEngine.Object.Destroy(_physicsMaterial);
+            _physicsMaterial = null;
         }
     }
 
@@ -132,7 +200,8 @@ namespace FIHMapEditor
                 var instance = new Instance
                 {
                     Behavior = (IPackagedGeometryBehavior)type.GetConstructor(Type.EmptyTypes).Invoke(null),
-                    Context = new PackagedGeometryContext(placed, name, _finder),
+                    Context = new PackagedGeometryContext(placed, name, _finder,
+                        _assets.FirstOrDefault(asset => string.Equals(asset.Name, name, StringComparison.OrdinalIgnoreCase))),
                 };
                 _instances[placed.Uid] = instance;
                 instance.Behavior.OnSpawn(instance.Context);
@@ -147,6 +216,7 @@ namespace FIHMapEditor
             _instances.Remove(placed.Uid);
             try { instance.Behavior.OnDespawn(instance.Context); }
             catch (Exception ex) { MapEditorPlugin.Logger.LogError($"[PACKAGE:{instance.Context.Name}] OnDespawn failed: {ex}"); }
+            finally { instance.Context.Cleanup(); }
         }
 
         public void Update(float deltaTime)
@@ -162,7 +232,10 @@ namespace FIHMapEditor
         private void ClearInstances()
         {
             foreach (var instance in _instances.Values)
+            {
                 try { instance.Behavior.OnDespawn(instance.Context); } catch { }
+                instance.Context.Cleanup();
+            }
             _instances.Clear();
         }
     }

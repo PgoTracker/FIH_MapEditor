@@ -12,6 +12,7 @@ namespace FIHMapEditor.Tests
         private const string Quad = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n";
         private static readonly byte[] TinyPng = Convert.FromBase64String(
             "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DA8J+BkYHh////DAAe9gT9Ce00PgAAAABJRU5ErkJggg==");
+        private static readonly byte[] TinyWav = Encoding.ASCII.GetBytes("RIFF----WAVEfmt ");
 
         [Fact]
         public void RoundTripPairsFilesAndPreservesMapReference()
@@ -91,6 +92,30 @@ namespace FIHMapEditor.Tests
                     Texture = Encoding.UTF8.GetBytes("not a png")
                 });
                 Assert.Throws<InvalidDataException>(() => MapPackage.Write(path, map));
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void RoundTripsMatchedImpactSoundAndRejectsInvalidAudio()
+        {
+            string path = TempPath();
+            try
+            {
+                var map = new MapFile { Name = "Impact test" };
+                map.Objects.Add(new MapObjectData { Source = "package://Ramp" });
+                map.PackageAssets.Add(new MapPackageAsset
+                {
+                    Name = "Ramp", Geometry = Encoding.UTF8.GetBytes(Quad),
+                    ImpactSound = TinyWav, ImpactSoundExtension = ".wav"
+                });
+                MapPackage.Write(path, map);
+                var loadedMap = MapPackage.Read(path);
+                var loaded = loadedMap.PackageAssets.Single();
+                Assert.Equal(TinyWav, loaded.ImpactSound);
+                Assert.Equal(".wav", loaded.ImpactSoundExtension);
+                loaded.ImpactSound = Encoding.UTF8.GetBytes("not audio data");
+                Assert.Throws<InvalidDataException>(() => MapPackage.Write(path, loadedMap));
             }
             finally { File.Delete(path); }
         }

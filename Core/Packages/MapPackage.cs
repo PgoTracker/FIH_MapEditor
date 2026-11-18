@@ -18,6 +18,8 @@ namespace FIHMapEditor
         public byte[] Geometry { get; set; }
         public string Script { get; set; }
         public byte[] Texture { get; set; }
+        public byte[] ImpactSound { get; set; }
+        public string ImpactSoundExtension { get; set; }
     }
 
     public static class MapPackage
@@ -29,6 +31,7 @@ namespace FIHMapEditor
         public const int MaxGeometryBytes = 8 * 1024 * 1024;
         public const int MaxScriptBytes = 256 * 1024;
         public const int MaxTextureBytes = 8 * 1024 * 1024;
+        public const int MaxImpactSoundBytes = 4 * 1024 * 1024;
         public const int MaxTextureDimension = 2048;
         public const int MaxPackageBytes = 64 * 1024 * 1024;
 
@@ -81,9 +84,11 @@ namespace FIHMapEditor
                 bool geometry = entry.FullName.StartsWith("geometry/", StringComparison.Ordinal);
                 bool script = entry.FullName.StartsWith("scripts/", StringComparison.Ordinal);
                 bool texture = entry.FullName.StartsWith("textures/", StringComparison.Ordinal);
-                string suffix = geometry ? ".obj" : script ? ".cs" : ".png";
-                string folder = geometry ? "geometry/" : script ? "scripts/" : "textures/";
-                if ((!geometry && !script && !texture) || !entry.FullName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                bool sound = entry.FullName.StartsWith("sounds/", StringComparison.Ordinal);
+                string suffix = geometry ? ".obj" : script ? ".cs" : texture ? ".png"
+                    : entry.FullName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? ".wav" : ".ogg";
+                string folder = geometry ? "geometry/" : script ? "scripts/" : texture ? "textures/" : "sounds/";
+                if ((!geometry && !script && !texture && !sound) || !entry.FullName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Unexpected package entry: " + entry.FullName);
                 string name = entry.FullName.Substring(folder.Length, entry.FullName.Length - folder.Length - suffix.Length);
                 if (!IsValidName(name)) throw new InvalidDataException("Invalid geometry name: " + name);
@@ -103,16 +108,23 @@ namespace FIHMapEditor
                     if (asset.Script != null) throw new InvalidDataException("Duplicate script name: " + name);
                     asset.Script = ReadText(entry, MaxScriptBytes);
                 }
-                else
+                else if (texture)
                 {
                     if (asset.Texture != null) throw new InvalidDataException("Duplicate texture name: " + name);
                     asset.Texture = ReadBytes(entry, MaxTextureBytes);
                     ValidateTexture(asset.Texture);
                 }
+                else
+                {
+                    if (asset.ImpactSound != null) throw new InvalidDataException("Duplicate impact sound name: " + name);
+                    asset.ImpactSound = ReadBytes(entry, MaxImpactSoundBytes);
+                    asset.ImpactSoundExtension = suffix;
+                    ValidateImpactSound(asset.ImpactSound, suffix);
+                }
             }
             if (mapJson == null) throw new InvalidDataException("Missing map.fihmap.json.");
             foreach (var asset in assets.Values)
-                if (asset.Geometry == null) throw new InvalidDataException("Script or texture has no matching OBJ: " + asset.Name);
+                if (asset.Geometry == null) throw new InvalidDataException("Script, texture or sound has no matching OBJ: " + asset.Name);
             var map = JsonSerializer.Deserialize<MapFile>(mapJson, Json)
                 ?? throw new InvalidDataException("Map JSON deserialized to null.");
             MapMigrations.Normalize(map);
@@ -134,11 +146,13 @@ namespace FIHMapEditor
             {
                 if (asset == null || !IsValidName(asset.Name) || !names.Add(asset.Name) || asset.Geometry == null
                     || asset.Geometry.Length > MaxGeometryBytes || Encoding.UTF8.GetByteCount(asset.Script ?? "") > MaxScriptBytes
-                    || (asset.Texture?.Length ?? 0) > MaxTextureBytes)
+                    || (asset.Texture?.Length ?? 0) > MaxTextureBytes
+                    || (asset.ImpactSound?.Length ?? 0) > MaxImpactSoundBytes)
                     throw new InvalidDataException("Invalid package asset.");
                 if (asset.Texture != null) ValidateTexture(asset.Texture);
+                if (asset.ImpactSound != null) ValidateImpactSound(asset.ImpactSound, asset.ImpactSoundExtension);
                 uncompressedBytes += asset.Geometry.Length + Encoding.UTF8.GetByteCount(asset.Script ?? "")
-                    + (asset.Texture?.Length ?? 0);
+                    + (asset.Texture?.Length ?? 0) + (asset.ImpactSound?.Length ?? 0);
             }
             if (uncompressedBytes > MaxPackageBytes) throw new InvalidDataException("Map package expands beyond 64 MB.");
             foreach (var obj in map.Objects ?? new List<MapObjectData>())
@@ -160,6 +174,12 @@ namespace FIHMapEditor
                             var textureEntry = zip.CreateEntry("textures/" + asset.Name + ".png", CompressionLevel.Optimal);
                             using var stream = textureEntry.Open();
                             stream.Write(asset.Texture, 0, asset.Texture.Length);
+                        }
+                        if (asset.ImpactSound != null)
+                        {
+                            var soundEntry = zip.CreateEntry("sounds/" + asset.Name + asset.ImpactSoundExtension, CompressionLevel.Optimal);
+                            using var stream = soundEntry.Open();
+                            stream.Write(asset.ImpactSound, 0, asset.ImpactSound.Length);
                         }
                     }
                 }
@@ -219,6 +239,18 @@ namespace FIHMapEditor
 
         private static void ValidateTexture(byte[] png)
             => PngTexture.ValidateHeader(png);
+
+        private static void ValidateImpactSound(byte[] bytes, string extension)
+        {
+            if (bytes == null || bytes.Length < 12 || bytes.Length > MaxImpactSoundBytes)
+                throw new InvalidDataException("Impact sound must be 12 bytes to 4 MB.");
+            bool wav = string.Equals(extension, ".wav", StringComparison.OrdinalIgnoreCase)
+                && Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF"
+                && Encoding.ASCII.GetString(bytes, 8, 4) == "WAVE";
+            bool ogg = string.Equals(extension, ".ogg", StringComparison.OrdinalIgnoreCase)
+                && Encoding.ASCII.GetString(bytes, 0, 4) == "OggS";
+            if (!wav && !ogg) throw new InvalidDataException("Impact sound must be a WAV or Ogg file.");
+        }
 
         private static void WriteText(ZipArchive zip, string name, string content)
         {

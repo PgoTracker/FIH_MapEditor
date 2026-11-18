@@ -163,9 +163,10 @@ namespace FIHMapEditor
         // (CheckpointData.Size/Rot). v9: soccer mode (Ball + SoccerGoals). v10: placeable
         // 3D scoreboard. v12: voice triggers + OwnerSteamId. v13: settings for the other
         // release-game network interactables. v14: packaged OBJ geometry references.
+        // v15: optional matched impact sounds in map packages.
         // Older files load fine — missing
         // fields stay at defaults and Uids are backfilled on load.
-        public const int CURRENT_FORMAT_VERSION = 14;
+        public const int CURRENT_FORMAT_VERSION = 15;
 
         public int FormatVersion { get; set; } = CURRENT_FORMAT_VERSION;
         // Stable per-map identity for the leaderboard and the online map library. Minted

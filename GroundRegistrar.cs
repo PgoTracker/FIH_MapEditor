@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using GameGround = EHS.Ground.Ground;
 
 namespace FIHMapEditor
 {
@@ -17,6 +18,19 @@ namespace FIHMapEditor
     // degrades to today's behavior: default surface + cosmetic errors.
     public static class GroundRegistrar
     {
+        // Package geometry needs its own descriptor: sharing one level Ground makes
+        // changing a package object's surface also change unrelated level pieces.
+        // Keep the component disabled and register its collider explicitly below;
+        // this avoids the game's scene-init lifecycle running on a generated mesh.
+        public static GameGround EnsurePackageGround(GameObject clone)
+        {
+            if (clone == null) return null;
+            var ground = clone.GetComponent<GameGround>();
+            if (ground == null) ground = clone.AddComponent<GameGround>();
+            ground.enabled = false;
+            return ground;
+        }
+
         private static Il2CppSystem.Object _registry;
         private static Il2CppSystem.Reflection.MethodInfo _register;
         private static Il2CppSystem.Reflection.MethodInfo _unregister;

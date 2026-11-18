@@ -2,9 +2,10 @@
 
 The editor accepts `.fihmap.zip` files in `BepInEx/plugins/FIHMapEditor/Maps/`.
 Each archive contains a `map.fihmap.json`, OBJ files under `geometry/`, and optional
-C# source files under `scripts/` and PNG textures under `textures/`. Files with the
+C# source files under `scripts/`, PNG textures under `textures/`, and WAV or Ogg
+impact sounds under `sounds/`. Files with the
 same stem belong together, for example `geometry/Spinner.obj`,
-`scripts/Spinner.cs`, and `textures/Spinner.png`.
+`scripts/Spinner.cs`, `textures/Spinner.png`, and `sounds/Spinner.wav`.
 
 ## Make a package
 
@@ -19,8 +20,9 @@ To make your own package:
 1. Save a map normally from the editor to create its `.fihmap.json`.
 2. Export meshes as OBJ files. Names must start with a letter or `_` and then use
    letters, digits, or `_`, so a matching C# class can use the same name.
-3. Put optional matching `.cs` files in a scripts folder and matching `.png` files
-   in a textures folder. Each textured OBJ needs UV coordinates (`vt`).
+3. Put optional matching `.cs` files in a scripts folder, matching `.png` files
+   in a textures folder, and matching `.wav` or `.ogg` files in a sounds folder.
+   Each textured OBJ needs UV coordinates (`vt`).
 4. From the repository root, run:
 
 ```powershell
@@ -29,6 +31,7 @@ To make your own package:
   -GeometryDir 'C:\path\to\my-objs' `
   -ScriptsDir 'C:\path\to\my-scripts' `
   -TexturesDir 'C:\path\to\my-textures' `
+  -SoundsDir 'C:\path\to\my-impact-sounds' `
   -OutputPath 'C:\path\to\Maps\MyMap.fihmap.zip'
 ```
 
@@ -46,6 +49,12 @@ Material libraries (`.mtl`) are not imported. Meshes use a lit shader and a
 MeshCollider. The included Spinner texture is newly generated artwork in the
 example package, independent of the game's assets.
 
+Each packaged placement receives its own game `Ground` descriptor and is
+registered with the game's ground registry. Its matching C# script can change
+the surface and built-in landing sound without affecting other objects. The
+mesh collider is static by default; add a Rigidbody in custom C# only when the
+object needs simulated motion.
+
 ## Add C# behavior
 
 The class name must match the OBJ and C# filenames. It implements
@@ -57,7 +66,12 @@ using UnityEngine;
 
 public class Spinner : IPackagedGeometryBehavior
 {
-    public void OnSpawn(PackagedGeometryContext context) { }
+    public void OnSpawn(PackagedGeometryContext context)
+    {
+        context.SetGroundSurface(PackagedGroundSurface.HardMetal);
+        context.SetColliderPhysics(staticFriction: 0.7f, dynamicFriction: 0.5f,
+                                   bounciness: 0.05f);
+    }
 
     public void Update(PackagedGeometryContext context, float deltaTime)
     {
@@ -67,6 +81,21 @@ public class Spinner : IPackagedGeometryBehavior
     public void OnDespawn(PackagedGeometryContext context) { }
 }
 ```
+
+`SetGroundSurface` selects the game's built-in landing and footstep sound for
+that surface. Other examples include `Ice`, `Rubber`, `HardWood`, and
+`HardStone`. `SetGroundSpinVelocity` and `SetPhoneDestroyMode` expose the other
+settings on the game's `Ground` component. `SetColliderPhysics` sets collider
+friction and bounce (each value from 0 to 1) for this one placed object.
+
+For a custom impact sound, package `sounds/Spinner.wav` or
+`sounds/Spinner.ogg` (up to 4 MB) and call
+`context.EnablePackagedImpactSound()` in `OnSpawn`. The matching clip plays in
+3D when the object receives a collision. Optional arguments set the minimum
+collision impulse, cooldown, and volume. The custom clip and built-in surface
+sound can both play; choose `PackagedGroundSurface.None` if the custom clip
+should play alone. In the Blender add-on, select the mesh and set its
+**Impact Sound** file; the exporter packages it under the asset name.
 
 `context.LocalPlayer` gives a script the local player's GameObject for interactions.
 The included Spinner script uses it to carry and turn a player who is standing on

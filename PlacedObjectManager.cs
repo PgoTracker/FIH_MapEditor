@@ -224,6 +224,8 @@ namespace FIHMapEditor
                         $"[PLACE] '{sourceName}' inherited wipe-clean physics layers; restored " +
                         $"{inheritedLayersRestored} collider layer(s) on the clone.");
                 StripComponents(clone);
+                if (sourcePath != null && sourcePath.StartsWith(MapPackage.SourcePrefix, StringComparison.Ordinal))
+                    GroundRegistrar.EnsurePackageGround(clone);
                 LocalizeExternalReferences(clone, source);
                 // A game mechanic owns its own colliders and visual states (a jump reset
                 // is trigger-only, a breaking platform hides its parts): leave both alone.
