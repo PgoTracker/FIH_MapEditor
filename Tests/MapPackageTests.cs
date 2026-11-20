@@ -40,6 +40,31 @@ namespace FIHMapEditor.Tests
         }
 
         [Fact]
+        public void MissingPackageIdsAreStableAcrossClients()
+        {
+            string path = TempPath();
+            string peerPath = TempPath();
+            try
+            {
+                var map = new MapFile { Name = "Blender package" };
+                map.Objects.Add(new MapObjectData { Source = "package://Ramp" });
+                map.Objects.Add(new MapObjectData { Source = "package://Ramp" });
+                map.PackageAssets.Add(new MapPackageAsset
+                {
+                    Name = "Ramp", Geometry = Encoding.UTF8.GetBytes(Quad)
+                });
+                MapPackage.Write(path, map);
+                File.Copy(path, peerPath);
+                var first = MapPackage.Read(path);
+                var second = MapPackage.Read(peerPath);
+                Assert.Equal(first.MapId, second.MapId);
+                Assert.NotEqual(first.Objects[0].Uid, first.Objects[1].Uid);
+                Assert.Equal(first.Objects.Select(o => o.Uid), second.Objects.Select(o => o.Uid));
+            }
+            finally { File.Delete(path); File.Delete(peerPath); }
+        }
+
+        [Fact]
         public void RejectsTraversalAndMissingGeometry()
         {
             string path = TempPath();

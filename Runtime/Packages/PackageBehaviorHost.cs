@@ -18,10 +18,18 @@ namespace FIHMapEditor
         void OnDespawn(PackagedGeometryContext context);
     }
 
+    // Optional physics-step callback for packaged moving platforms. Existing map
+    // scripts continue to work without implementing this interface.
+    public interface IPackagedGeometryFixedBehavior : IPackagedGeometryBehavior
+    {
+        void FixedUpdate(PackagedGeometryContext context, float fixedDeltaTime);
+    }
+
     public sealed class PackagedGeometryContext
     {
         private readonly GameObjectFinder _finder;
         private readonly MapPackageAsset _asset;
+        private readonly MultiplayerSync _impactSync;
         private readonly List<(Collider collider, PhysicsMaterial material)> _originalPhysics =
             new List<(Collider, PhysicsMaterial)>();
         private PhysicsMaterial _physicsMaterial;
@@ -31,9 +39,10 @@ namespace FIHMapEditor
         public GameObject Root { get; }
         public GameObject LocalPlayer => _finder?.FindPlayer();
         public PackagedGeometryContext(PlacedObject placed, string name, GameObjectFinder finder,
-                                      MapPackageAsset asset = null)
+            MapPackageAsset asset = null, MultiplayerSync impactSync = null)
         {
-            Uid = placed.Uid; Name = name; Root = placed.Root; _finder = finder; _asset = asset;
+            Uid = placed.Uid; Name = name; Root = placed.Root; _finder = finder;
+            _asset = asset; _impactSync = impactSync;
         }
 
         // Ground settings also select the game's matching landing/impact sound.
@@ -75,7 +84,8 @@ namespace FIHMapEditor
 
         // The package may contain sounds/<asset>.wav or .ogg. Scripts opt in so a
         // map can use the game's surface sound, its own sound, or both.
-        public bool EnablePackagedImpactSound(float minImpulse = 1f, float cooldown = 0.15f, float volume = 1f)
+        public bool EnablePackagedImpactSound(float minImpulse = 1f, float cooldown = 0.15f,
+            float volume = 1f, bool playerOnly = true)
         {
             if (_asset?.ImpactSound == null || Root == null) return false;
             if (minImpulse < 0f || cooldown < 0f || volume < 0f || volume > 1f)
@@ -83,9 +93,13 @@ namespace FIHMapEditor
             PackagedImpactSound.EnsureRegistered();
             _impactSound = Root.GetComponent<PackagedImpactSound>() ?? Root.AddComponent<PackagedImpactSound>();
             _impactSound.Configure(_asset.ImpactSound, _asset.ImpactSoundExtension,
-                                   minImpulse, cooldown, volume);
+                                   Uid, _finder, _impactSync, minImpulse, cooldown, volume,
+                                   playerOnly);
             return true;
         }
+
+        internal void PlayRemoteImpact(string soundHash, Vector3 point)
+            => _impactSound?.PlayRemote(soundHash, point);
 
         internal void Cleanup()
         {
@@ -102,6 +116,7 @@ namespace FIHMapEditor
     public sealed class PackageBehaviorHost
     {
         private readonly GameObjectFinder _finder;
+        public MultiplayerSync ImpactSync { get; set; }
         private sealed class Instance
         {
             public IPackagedGeometryBehavior Behavior;
@@ -201,7 +216,8 @@ namespace FIHMapEditor
                 {
                     Behavior = (IPackagedGeometryBehavior)type.GetConstructor(Type.EmptyTypes).Invoke(null),
                     Context = new PackagedGeometryContext(placed, name, _finder,
-                        _assets.FirstOrDefault(asset => string.Equals(asset.Name, name, StringComparison.OrdinalIgnoreCase))),
+                        _assets.FirstOrDefault(asset => string.Equals(asset.Name, name, StringComparison.OrdinalIgnoreCase)),
+                        ImpactSync),
                 };
                 _instances[placed.Uid] = instance;
                 instance.Behavior.OnSpawn(instance.Context);
@@ -219,6 +235,12 @@ namespace FIHMapEditor
             finally { instance.Context.Cleanup(); }
         }
 
+        public void PlayRemoteImpact(string uid, string soundHash, Vector3 point)
+        {
+            if (uid != null && _instances.TryGetValue(uid, out var instance))
+                instance.Context.PlayRemoteImpact(soundHash, point);
+        }
+
         public void Update(float deltaTime)
         {
             foreach (var instance in _instances.Values.ToArray())
@@ -226,6 +248,17 @@ namespace FIHMapEditor
                 if (instance.Context.Root == null) continue;
                 try { instance.Behavior.Update(instance.Context, deltaTime); }
                 catch (Exception ex) { MapEditorPlugin.Logger.LogError($"[PACKAGE:{instance.Context.Name}] Update failed: {ex}"); }
+            }
+        }
+
+        public void FixedUpdate(float fixedDeltaTime)
+        {
+            foreach (var instance in _instances.Values.ToArray())
+            {
+                if (instance.Context.Root == null ||
+                    instance.Behavior is not IPackagedGeometryFixedBehavior fixedBehavior) continue;
+                try { fixedBehavior.FixedUpdate(instance.Context, fixedDeltaTime); }
+                catch (Exception ex) { MapEditorPlugin.Logger.LogError($"[PACKAGE:{instance.Context.Name}] FixedUpdate failed: {ex}"); }
             }
         }
 

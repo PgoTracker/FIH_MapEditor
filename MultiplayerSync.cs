@@ -40,6 +40,7 @@ namespace FIHMapEditor
         private const byte MSG_OPS = 2;
         private const byte MSG_REQUEST = 3;
         private const byte MSG_BALL = 4;   // soccer ball state / kick requests
+        private const byte MSG_IMPACT = 5; // one packaged impact sound, not audio bytes
 
         private const float HELLO_INTERVAL = 3f;
         private const float PEER_TIMEOUT = 10f;
@@ -91,6 +92,15 @@ namespace FIHMapEditor
             public bool K { get; set; }   // true = kick request
         }
 
+        private class ImpactEnvelope
+        {
+            public string MapId { get; set; }
+            public string Uid { get; set; }
+            public string SoundHash { get; set; }
+            public long Sequence { get; set; }
+            public float[] Point { get; set; }
+        }
+
         // Kinds
         private const int K_OBJ_UPSERT = 0, K_OBJ_DELETE = 1;
         private const int K_CP_UPSERT = 2, K_CP_DELETE = 3;
@@ -126,6 +136,8 @@ namespace FIHMapEditor
 
         private readonly IMultiplayerEditorContext _c;
         private readonly Dictionary<ulong, Peer> _peers = new Dictionary<ulong, Peer>();
+        private readonly Dictionary<ulong, long> _lastImpactSequence = new Dictionary<ulong, long>();
+        private long _nextImpactSequence;
 
         // Always on: discovery is idle-cheap in singleplayer, and syncing must never
         // depend on someone remembering a menu toggle.
@@ -209,6 +221,7 @@ namespace FIHMapEditor
             _broadcastAt = -1f;
             _lobby = null;
             _lastLoggedMemberCount = -1;
+            _lastImpactSequence.Clear();
         }
 
         // Offline builds (playtests) never initialise Steamworks, so every Steam call throws.
@@ -670,6 +683,37 @@ namespace FIHMapEditor
             }
         }
 
+        // The colliding player's client is the source of truth for an impact. Peers
+        // already have the clip in their map package, so only its identity and the
+        // 3D contact point cross the wire.
+        public void SendPackagedImpact(string uid, string soundHash, Vector3 point)
+        {
+            string mapId = _c.MapId;
+            // A loaded map keeps its package behaviors running in normal gameplay,
+            // where editor mode is Off. Impact replication must work there too.
+            if (string.IsNullOrEmpty(mapId) || string.IsNullOrEmpty(uid)
+                || string.IsNullOrEmpty(soundHash)) return;
+            try
+            {
+                var peers = FreshPeers().Where(p => p.MapId == mapId).ToList();
+                if (peers.Count == 0) return;
+                var envelope = new ImpactEnvelope
+                {
+                    MapId = mapId,
+                    Uid = uid,
+                    SoundHash = soundHash,
+                    Sequence = ++_nextImpactSequence,
+                    Point = VecUtil.ToArray(point),
+                };
+                var payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope));
+                foreach (var peer in peers) SendTo(peer.Id, MSG_IMPACT, payload);
+            }
+            catch (Exception ex)
+            {
+                MapEditorPlugin.Logger.LogWarning($"[COOP] Impact send error: {ex.Message}");
+            }
+        }
+
         private void SendTo(ulong steamId, byte type, byte[] payload)
         {
             try
@@ -727,6 +771,8 @@ namespace FIHMapEditor
                     case MSG_HELLO:
                     {
                         bool isNew = !_peers.TryGetValue(senderId, out var peer);
+                        if (isNew || Time.unscaledTime - peer.LastHello >= PEER_TIMEOUT)
+                            _lastImpactSequence.Remove(senderId);
                         if (isNew)
                         {
                             peer = new Peer { Id = senderId };
@@ -830,6 +876,34 @@ namespace FIHMapEditor
                         int a = env.A, b = env.B;
                         bool kick = env.K;
                         _c.RunOnMainThread(() => _c.PlayMode.ApplyRemoteBall(senderId, pos, vel, a, b, kick));
+                        break;
+                    }
+
+                    case MSG_IMPACT:
+                    {
+                        if (payload.Length > 1024
+                            || !_peers.TryGetValue(senderId, out var peer)
+                            || Time.unscaledTime - peer.LastHello >= PEER_TIMEOUT) break;
+                        var env = JsonSerializer.Deserialize<ImpactEnvelope>(payload, JsonOpts);
+                        if (env == null || string.IsNullOrEmpty(env.MapId)
+                            || env.MapId != _c.MapId || peer.MapId != env.MapId
+                            || string.IsNullOrEmpty(env.Uid) || env.Uid.Length > 128
+                            || env.SoundHash?.Length != 64 || env.Sequence <= 0
+                            || env.Point?.Length != 3
+                            || !float.IsFinite(env.Point[0]) || !float.IsFinite(env.Point[1])
+                            || !float.IsFinite(env.Point[2])) break;
+                        if (_lastImpactSequence.TryGetValue(senderId, out long last)
+                            && env.Sequence <= last) break;
+                        _lastImpactSequence[senderId] = env.Sequence;
+                        string mapId = env.MapId;
+                        string uid = env.Uid;
+                        string soundHash = env.SoundHash;
+                        Vector3 point = VecUtil.ToVector3(env.Point);
+                        _c.RunOnMainThread(() =>
+                        {
+                            if (_c.MapId == mapId)
+                                _c.PlayRemotePackagedImpact(uid, soundHash, point);
+                        });
                         break;
                     }
                 }

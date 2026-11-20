@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace FIHMapEditor
 {
@@ -23,6 +24,7 @@ namespace FIHMapEditor
         // Host-assigned FishNet ObjectId of each placed network object, by object Uid.
         // Not part of the map file: ids are only valid within the current session.
         Dictionary<string, int> NetworkObjectIds();
+        void PlayRemotePackagedImpact(string uid, string soundHash, Vector3 point);
 
         // Transport callbacks may run off-thread; implementations marshal mutations through
         // RunOnMainThread before touching Unity objects or the working session.

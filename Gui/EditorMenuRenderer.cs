@@ -967,7 +967,7 @@ namespace FIHMapEditor
             {
                 _c.Xray.SetEnabled(!_c.Xray.Enabled);
                 if (_c.Xray.Enabled)
-                    _c.ShowToast($"X-ray: {_c.Xray.Count} invisible objects (magenta = trigger, white = solid). " +
+                    _c.ShowToast("X-ray scanning for invisible objects (magenta = trigger, white = solid). " +
                                  (_c.PickInvisible ? "" : "Turn 'Pick invisible' ON to click them."));
             }
             y += 30;

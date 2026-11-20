@@ -224,6 +224,7 @@ namespace FIHMapEditor
             LevelEdits = new LevelEditManager();
             Undo = new UndoSystem();
             Multiplayer = new MultiplayerSync(this);
+            PackageBehaviors.ImpactSync = Multiplayer;
             Leaderboard = new LeaderboardService();
             OnlineMaps = new OnlineMapService();
             CatalogSync = new CatalogSyncService();
@@ -440,6 +441,12 @@ namespace FIHMapEditor
             {
                 MapEditorPlugin.Logger.LogError($"Error in EditorController.Update: {ex}");
             }
+        }
+
+        public void FixedUpdate()
+        {
+            if (InGameScene && Mode != EditorMode.Editor)
+                PackageBehaviors?.FixedUpdate(Time.fixedDeltaTime);
         }
 
         public void OnGUI()
@@ -2764,6 +2771,9 @@ namespace FIHMapEditor
         }
 
         public Dictionary<string, int> NetworkObjectIds() => PlacedManager.NetworkObjectIds();
+
+        public void PlayRemotePackagedImpact(string uid, string soundHash, Vector3 point)
+            => PackageBehaviors.PlayRemoteImpact(uid, soundHash, point);
 
         public void ApplyRemoteNetworkObjectId(string uid, int? objectId)
             => PlacedManager.SetRemoteNetworkObjectId(uid, objectId);

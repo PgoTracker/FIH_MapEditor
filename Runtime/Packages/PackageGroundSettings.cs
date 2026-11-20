@@ -31,6 +31,11 @@ namespace FIHMapEditor
 
     internal static class PackageGroundSettings
     {
+        // A newly created Ground otherwise starts at None, which the game's
+        // PlayerSettingsSO has no torque multiplier for. Scripts may override it.
+        internal static void InitializeGround(GameGround ground)
+            => Set(ground, "SpinVelocityType", EHS.Ground.SpinVelocityType.Regular);
+
         private static GameGround Ground(GameObject root)
             => GroundRegistrar.EnsurePackageGround(root)
                ?? throw new InvalidOperationException("Packaged object has no root for its Ground component.");

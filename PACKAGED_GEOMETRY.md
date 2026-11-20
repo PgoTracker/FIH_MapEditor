@@ -82,6 +82,14 @@ public class Spinner : IPackagedGeometryBehavior
 }
 ```
 
+The `Update` example above is suitable for simple visual motion. A collider
+that carries the player should instead implement the optional
+`IPackagedGeometryFixedBehavior` interface, add a kinematic Rigidbody, and
+move it with `Rigidbody.MoveRotation` or `MovePosition` in `FixedUpdate`.
+Existing scripts using only `IPackagedGeometryBehavior` remain compatible.
+See `Examples/KinematicClockSpinner/Spinner.cs` for a rotating platform that
+uses the game's synchronized clock and physics steps.
+
 `SetGroundSurface` selects the game's built-in landing and footstep sound for
 that surface. Other examples include `Ice`, `Rubber`, `HardWood`, and
 `HardStone`. `SetGroundSpinVelocity` and `SetPhoneDestroyMode` expose the other
@@ -98,8 +106,16 @@ should play alone. In the Blender add-on, select the mesh and set its
 **Impact Sound** file; the exporter packages it under the asset name.
 
 `context.LocalPlayer` gives a script the local player's GameObject for interactions.
-The included Spinner script uses it to carry and turn a player who is standing on
-the cube. This behavior runs locally for each player who has the package installed.
+The older `Examples/ClockSyncedSpinner/Spinner.cs` manually turns a player who
+is standing on the cube. The kinematic example lets physics handle that contact.
+Both behaviors run locally for each player who has the package installed.
+Player collisions with packaged objects relay the matching impact sound to modded
+peers on the same map. The event sends the object identity and contact position,
+not the audio file; each player needs the same package and must enable its C#.
+Packaged impact sounds play for contacts with a player's main Rigidbody by
+default, so loose phone debris and other props do not trigger them. To make a
+sound react to all physics contacts, call `EnablePackagedImpactSound` with
+`playerOnly: false`; non-player contacts then play locally.
 
 The editor compiles matching scripts together when you click **ENABLE MAP C#** in
 the local Maps Hub. This trusts the exact script contents and remembers their hash

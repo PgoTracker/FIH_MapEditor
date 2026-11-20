@@ -26,7 +26,15 @@ namespace FIHMapEditor
         {
             if (clone == null) return null;
             var ground = clone.GetComponent<GameGround>();
-            if (ground == null) ground = clone.AddComponent<GameGround>();
+            if (ground == null)
+            {
+                ground = clone.AddComponent<GameGround>();
+                try { PackageGroundSettings.InitializeGround(ground); }
+                catch (Exception ex)
+                {
+                    MapEditorPlugin.Logger.LogWarning($"[GROUND] Could not set default spin velocity: {ex.Message}");
+                }
+            }
             ground.enabled = false;
             return ground;
         }

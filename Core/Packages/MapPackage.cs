@@ -127,6 +127,22 @@ namespace FIHMapEditor
                 if (asset.Geometry == null) throw new InvalidDataException("Script, texture or sound has no matching OBJ: " + asset.Name);
             var map = JsonSerializer.Deserialize<MapFile>(mapJson, Json)
                 ?? throw new InvalidDataException("Map JSON deserialized to null.");
+            // Blender packages may omit IDs. Random backfills would make two players
+            // loading the same ZIP disagree about the map and each placement, so
+            // derive missing IDs from the archive they both installed.
+            if (string.IsNullOrEmpty(map.MapId) || (map.Objects?.Any(o => string.IsNullOrEmpty(o.Uid)) ?? false))
+            {
+                string packageHash = Sha256(path);
+                if (string.IsNullOrEmpty(map.MapId)) map.MapId = packageHash.Substring(0, 32);
+                if (map.Objects != null)
+                    for (int i = 0; i < map.Objects.Count; i++)
+                        if (string.IsNullOrEmpty(map.Objects[i].Uid))
+                        {
+                            byte[] key = Encoding.UTF8.GetBytes(map.MapId + ":object:" + i);
+                            map.Objects[i].Uid = Convert.ToHexString(SHA256.HashData(key))
+                                .ToLowerInvariant().Substring(0, 32);
+                        }
+            }
             MapMigrations.Normalize(map);
             map.PackageAssets = assets.Values.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).ToList();
             map.PackageCodeHash = CodeHash(map.PackageAssets);

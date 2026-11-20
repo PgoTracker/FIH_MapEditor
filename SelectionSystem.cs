@@ -577,10 +577,10 @@ namespace FIHMapEditor
         }
 
         // Public: the invisible-collider visualizer groups colliders by the same root.
-        public static Transform ClimbToLogicalRoot(Transform t)
+        public static Transform ClimbToLogicalRoot(Transform t, Dictionary<int, int> verdictCache = null)
         {
             var root = t;
-            var cache = new Dictionary<int, int>();
+            var cache = verdictCache ?? new Dictionary<int, int>();
             while (root.parent != null)
             {
                 var p = root.parent;
